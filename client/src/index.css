@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --font-sans: 'Fredoka', sans-serif;
+  --font-story: 'Patrick Hand', cursive;
+  --font-serif: 'Lora', serif;
+
+  --color-paper: hsl(210 40% 98%);
+  --color-paper-dark: hsl(210 30% 95%);
+  --color-ink: hsl(220 15% 25%);
+  
+  --color-primary: hsl(210 100% 60%);
+  --color-primary-foreground: hsl(0 0% 100%);
+  
+  --color-accent: hsl(200 85% 55%);
+  --color-success: hsl(145 60% 45%);
+  --color-warning: hsl(45 90% 60%);
+}
+
+@layer base {
+  html, body {
+    @apply h-full w-full overflow-hidden bg-gradient-to-br from-blue-50 via-white to-blue-50 text-ink touch-none;
+  }
+  
+  #root {
+    @apply h-full w-full;
+  }
+}
+
+@layer components {
+  /* Book Page Styles */
+  .book-spread {
+    @apply flex h-full w-full bg-paper relative shadow-inner;
+  }
+  
+  .book-page-left {
+    @apply w-1/2 h-full p-4 flex items-center justify-center border-r border-stone-300/50 bg-stone-50;
+  }
+  
+  .book-page-right {
+    @apply w-1/2 h-full p-8 flex flex-col justify-center bg-[#fffbf0];
+    background-image: radial-gradient(#d4c5b0 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .highlight-text {
+    @apply bg-yellow-200/80 transition-colors duration-300 rounded px-1 -mx-1;
+  }
+}
+
+/* Custom Scrollbar for Story Text */
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
