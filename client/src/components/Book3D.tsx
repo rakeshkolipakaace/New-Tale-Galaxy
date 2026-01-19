@@ -61,19 +61,21 @@ export function SequentialHighlighter({ text, transcript, isRecordMode, isExplai
     // Normalize text and transcript for comparison
     const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
     
-    const textWords = text.split(' '); // Keep original punctuation/casing for display
+    const textWords = text.split(/\s+/); // Use regex to handle multiple spaces
     const cleanTextWords = normalize(text);
     const cleanTranscriptWords = normalize(transcript);
 
     // Find the furthest matching index
     let lastMatchIndex = -1;
     
-    // Logic for Record Mode (matching transcript)
-    if (isRecordMode) {
+    // Logic for matching transcript (used for both Record and Explain mode if transcript is provided)
+    if (isRecordMode || isExplainMode) {
         let textCursor = 0;
+        // We look for the longest contiguous match from the start of the text
         for (const tWord of cleanTranscriptWords) {
             let matched = false;
-            for (let i = textCursor; i < Math.min(textCursor + 5, cleanTextWords.length); i++) {
+            // Look ahead a few words to handle skips or errors
+            for (let i = textCursor; i < Math.min(textCursor + 10, cleanTextWords.length); i++) {
                 if (cleanTextWords[i] === tWord) {
                     textCursor = i + 1;
                     lastMatchIndex = i;
@@ -82,11 +84,10 @@ export function SequentialHighlighter({ text, transcript, isRecordMode, isExplai
                 }
             }
             
-            // If we didn't match and it's a reasonably long word, track it as potentially mispronounced
-            if (!matched && tWord.length > 2 && onMispronounced) {
+            // Mispronunciation tracking (only in record mode)
+            if (isRecordMode && !matched && tWord.length > 2 && onMispronounced) {
                 const targetWord = cleanTextWords[textCursor];
                 if (targetWord && targetWord !== tWord) {
-                    // Use a timeout to avoid setting state during render
                     setTimeout(() => onMispronounced(targetWord), 0);
                 }
             }
@@ -96,21 +97,22 @@ export function SequentialHighlighter({ text, transcript, isRecordMode, isExplai
     return (
         <span>
             {textWords.map((word, i) => {
-                const isRead = isRecordMode && i <= lastMatchIndex;
-                const isCurrent = isRecordMode && i === lastMatchIndex + 1;
+                const isMatched = i <= lastMatchIndex;
+                const isCurrent = i === lastMatchIndex + 1;
                 
+                let highlightClass = "";
+                if (isExplainMode) {
+                    if (isMatched) highlightClass = "bg-blue-100 text-blue-800 font-medium border-b-2 border-blue-400";
+                    else if (isCurrent) highlightClass = "bg-blue-50/50 border-b-2 border-blue-200 animate-pulse";
+                } else if (isRecordMode) {
+                    if (isMatched) highlightClass = "bg-green-100 text-green-800 font-medium";
+                    else if (isCurrent) highlightClass = "bg-yellow-100 border-b-2 border-yellow-400";
+                }
+
                 return (
                     <span 
                         key={i} 
-                        className={`transition-all duration-300 px-0.5 rounded-sm inline-block ${
-                            isExplainMode 
-                                ? "border-b-2 border-blue-400 font-medium bg-blue-50/50" 
-                                : isRead
-                                    ? "bg-green-100 text-green-800 font-medium" 
-                                    : isCurrent
-                                        ? "bg-yellow-100 border-b-2 border-yellow-400"
-                                        : ""
-                        }`}
+                        className={`transition-all duration-300 px-0.5 rounded-sm inline-block ${highlightClass}`}
                     >
                         {word}{' '}
                     </span>

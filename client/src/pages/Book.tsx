@@ -47,21 +47,23 @@ export default function Book() {
     }
   };
 
+  // Local UI State
+  const [isRecordMode, setIsRecordMode] = useState(false);
+  const [isExplainMode, setIsExplainMode] = useState(false);
+
   // Voice Hooks
-  const { isListening, transcript, startListening, stopListening, resetTranscript } = useSpeechToText();
+  const { isListening, transcript: sttTranscript, startListening, stopListening, resetTranscript } = useSpeechToText();
   
   // TTS Hook with Auto-Turn Callback
-  const { isSpeaking, speak, stop: stopSpeaking } = useTextToSpeech({
+  const { isSpeaking, speak, stop: stopSpeaking, transcript: ttsTranscript } = useTextToSpeech({
       onEnd: () => {
           setTimeout(() => {
               setAutoTurnTrigger(t => t + 1);
           }, 1000);
       }
   });
-  
-  // Local UI State
-  const [isRecordMode, setIsRecordMode] = useState(false);
-  const [isExplainMode, setIsExplainMode] = useState(false);
+
+  const transcript = isExplainMode ? (ttsTranscript || "") : (sttTranscript || "");
 
   // Effect: Handle Auto-Turn Trigger
   useEffect(() => {
