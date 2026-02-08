@@ -15,13 +15,14 @@ Preferred communication style: Simple, everyday language.
 ### Frontend (Expo / React Native)
 - **Framework**: Expo SDK 54 with React Native 0.81, using the new architecture (`newArchEnabled: true`)
 - **Routing**: expo-router with file-based routing. The app has two main screens:
-  - `app/index.tsx` — Home screen with a list of story cards
-  - `app/story/[id].tsx` — Individual story reader with word-level interaction, text-to-speech (expo-speech), and haptic feedback
+  - `app/index.tsx` — Home screen with age selection (3-12 years) and a 2-column grid of story cards with watercolor illustrations
+  - `app/story/[id].tsx` — Book-format story reader (brown spine + cream page) with illustration image, story text with word-level highlighting, text-to-speech (Explain mode via expo-speech), and real-time speech recognition (Record mode via Web Speech API)
 - **State Management**: React Query (`@tanstack/react-query`) for server state; local React state for UI interactions
 - **Animations**: `react-native-reanimated` for smooth animations (e.g., word highlighting during read-aloud)
 - **Fonts**: Google Fonts via `@expo-google-fonts` — Playfair Display for headings, Inter for body text
 - **Styling**: StyleSheet-based with a custom color palette defined in `constants/colors.ts`. Dark navy theme with gold/coral accents.
-- **Data**: Stories are currently hardcoded in `constants/stories.ts` as static data (not fetched from the backend yet)
+- **Data**: Stories are hardcoded in `constants/stories.ts` with age ranges (ageMin/ageMax), moral text, and illustration image references (`assets/images/story-*.png`). Age filtering is handled client-side.
+- **Story Images**: 6 watercolor-style illustrations in `assets/images/` for each Aesop's fable, used in both home screen cards and book-format reader
 - **Key Libraries**: expo-speech, expo-haptics, expo-linear-gradient, expo-image, react-native-gesture-handler, react-native-safe-area-context
 
 ### Backend (Express.js)
