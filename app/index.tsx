@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
   cardImage: {
     width: "100%",
     height: "100%",
-    resizeMode: "cover",
+    objectFit: "cover",
   },
   cardOverlay: {
     ...StyleSheet.absoluteFillObject,

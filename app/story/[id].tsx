@@ -395,7 +395,6 @@ export default function StoryScreen() {
                     styles.storyImage,
                     !isWide && { height: 220 },
                   ]}
-                  resizeMode="cover"
                 />
                 <View style={styles.imageCaption}>
                   <Text style={styles.imageCaptionTitle}>{story.title}</Text>
