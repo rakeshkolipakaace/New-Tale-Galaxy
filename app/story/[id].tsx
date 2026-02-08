@@ -12,14 +12,13 @@ import { useLocalSearchParams, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Speech from "expo-speech";
-import { AudioModule } from "expo-audio";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withTiming,
   withRepeat,
   withSequence,
+  withTiming,
   Easing,
 } from "react-native-reanimated";
 import Colors from "@/constants/colors";
@@ -27,25 +26,33 @@ import { stories } from "@/constants/stories";
 
 type Mode = "idle" | "explain" | "record";
 
+function normalizeWord(w: string): string {
+  return w.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 function WordToken({
   word,
   index,
   isHighlighted,
   isUnderlined,
+  isCurrent,
   mode,
 }: {
   word: string;
   index: number;
   isHighlighted: boolean;
   isUnderlined: boolean;
+  isCurrent: boolean;
   mode: Mode;
 }) {
   const bgColor =
-    isHighlighted && mode === "explain"
+    isCurrent && mode === "explain"
       ? Colors.highlight
-      : isHighlighted && mode === "record"
-        ? Colors.highlightRecord
-        : "transparent";
+      : isCurrent && mode === "record"
+        ? "rgba(78, 205, 196, 0.45)"
+        : isHighlighted && mode === "record"
+          ? Colors.highlightRecord
+          : "transparent";
 
   const underlineColor =
     isUnderlined && mode === "explain" ? Colors.underline : "transparent";
@@ -58,8 +65,9 @@ function WordToken({
           backgroundColor: bgColor,
           borderBottomWidth: isUnderlined ? 2 : 0,
           borderBottomColor: underlineColor,
-          borderRadius: isHighlighted ? 4 : 0,
-          paddingHorizontal: isHighlighted ? 2 : 0,
+          borderRadius: isHighlighted || isCurrent ? 4 : 0,
+          paddingHorizontal: isHighlighted || isCurrent ? 2 : 0,
+          color: isHighlighted && mode === "record" ? Colors.accentGreen : Colors.text,
         },
       ]}
     >
@@ -89,6 +97,11 @@ function PulsingDot() {
   return <Animated.View style={[styles.pulsingDot, animStyle]} />;
 }
 
+function getSpeechRecognitionAPI(): any {
+  if (typeof window === "undefined") return null;
+  return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
+}
+
 export default function StoryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const story = stories.find((s) => s.id === id);
@@ -99,9 +112,10 @@ export default function StoryScreen() {
   const [mode, setMode] = useState<Mode>("idle");
   const [currentWordIndex, setCurrentWordIndex] = useState(-1);
   const [highlightedWords, setHighlightedWords] = useState<Set<number>>(new Set());
+  const [recordError, setRecordError] = useState<string | null>(null);
   const modeRef = useRef<Mode>("idle");
   const recognitionRef = useRef<any>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const explainIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wordsRef = useRef<string[]>([]);
   const matchIndexRef = useRef(0);
 
@@ -118,6 +132,10 @@ export default function StoryScreen() {
 
   const stopExplain = useCallback(() => {
     Speech.stop();
+    if (explainIntervalRef.current) {
+      clearInterval(explainIntervalRef.current);
+      explainIntervalRef.current = null;
+    }
     setMode("idle");
     modeRef.current = "idle";
     setCurrentWordIndex(-1);
@@ -134,6 +152,7 @@ export default function StoryScreen() {
     modeRef.current = "explain";
     setCurrentWordIndex(0);
     setHighlightedWords(new Set());
+    setRecordError(null);
 
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -141,21 +160,20 @@ export default function StoryScreen() {
 
     const fullText = story.content;
     const totalWords = words.length;
-    const avgCharsPerWord = fullText.length / totalWords;
     const speechRate = 0.85;
     const msPerWord = (60 / (150 * speechRate)) * 1000;
 
     let wordIdx = 0;
-    const interval = setInterval(() => {
+    explainIntervalRef.current = setInterval(() => {
       if (modeRef.current !== "explain") {
-        clearInterval(interval);
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
         return;
       }
       if (wordIdx < totalWords) {
         setCurrentWordIndex(wordIdx);
         wordIdx++;
       } else {
-        clearInterval(interval);
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
         setMode("idle");
         modeRef.current = "idle";
         setCurrentWordIndex(-1);
@@ -167,36 +185,31 @@ export default function StoryScreen() {
       pitch: 1.0,
       language: "en-US",
       onDone: () => {
-        clearInterval(interval);
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
         setMode("idle");
         modeRef.current = "idle";
         setCurrentWordIndex(-1);
       },
       onStopped: () => {
-        clearInterval(interval);
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
       },
     });
-  }, [mode, story, words]);
+  }, [mode, story, words, stopExplain]);
 
-  const stopRecord = useCallback(async () => {
+  const stopRecord = useCallback(() => {
     setMode("idle");
     modeRef.current = "idle";
     setCurrentWordIndex(-1);
 
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-
     if (recognitionRef.current) {
       try {
-        recognitionRef.current.stop();
+        recognitionRef.current.abort();
       } catch (e) {}
       recognitionRef.current = null;
     }
   }, []);
 
-  const startRecord = useCallback(async () => {
+  const startRecord = useCallback(() => {
     if (mode === "explain") return;
     if (mode === "record") {
       stopRecord();
@@ -207,156 +220,124 @@ export default function StoryScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
+    setRecordError(null);
+
+    const SpeechRecognitionAPI = getSpeechRecognitionAPI();
+
+    if (!SpeechRecognitionAPI) {
+      setRecordError(
+        Platform.OS === "web"
+          ? "Speech recognition is not supported in this browser. Please open in Chrome."
+          : "Speech recognition requires a web browser. Open this app in Chrome for the Record feature."
+      );
+      return;
+    }
+
     setMode("record");
     modeRef.current = "record";
     setCurrentWordIndex(-1);
     setHighlightedWords(new Set());
     matchIndexRef.current = 0;
 
-    if (Platform.OS === "web" && typeof window !== "undefined") {
-      const SpeechRecognitionAPI =
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition;
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.maxAlternatives = 3;
+    recognitionRef.current = recognition;
 
-      if (!SpeechRecognitionAPI) {
-        Alert.alert(
-          "Not Supported",
-          "Speech recognition is not supported in this browser. Please use Chrome for the best experience."
-        );
-        setMode("idle");
-        modeRef.current = "idle";
-        return;
+    const storyWordsNorm = wordsRef.current.map(normalizeWord);
+
+    recognition.onresult = (event: any) => {
+      if (modeRef.current !== "record") return;
+
+      let fullTranscript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        fullTranscript += event.results[i][0].transcript + " ";
       }
 
-      const recognition = new SpeechRecognitionAPI();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = "en-US";
-      recognitionRef.current = recognition;
+      const spokenWords = fullTranscript
+        .toLowerCase()
+        .replace(/[^a-z0-9\s']/g, "")
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((w) => w.replace(/[^a-z0-9]/g, ""));
 
-      recognition.onresult = (event: any) => {
-        if (modeRef.current !== "record") return;
+      const newHighlighted = new Set<number>();
+      let storyIdx = 0;
 
-        let transcript = "";
-        for (let i = 0; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript + " ";
-        }
+      for (let si = 0; si < spokenWords.length && storyIdx < storyWordsNorm.length; si++) {
+        const spoken = spokenWords[si];
+        if (!spoken) continue;
 
-        const spokenWords = transcript
-          .toLowerCase()
-          .replace(/[^a-z0-9\s]/g, "")
-          .split(/\s+/)
-          .filter(Boolean);
+        let searchEnd = Math.min(storyIdx + 5, storyWordsNorm.length);
+        let found = false;
 
-        const storyWordsLower = wordsRef.current.map((w) =>
-          w.toLowerCase().replace(/[^a-z0-9]/g, "")
-        );
-
-        const newHighlighted = new Set<number>();
-        let matchIdx = 0;
-
-        for (const spoken of spokenWords) {
-          while (matchIdx < storyWordsLower.length) {
-            if (
-              storyWordsLower[matchIdx] === spoken ||
-              storyWordsLower[matchIdx].includes(spoken) ||
-              spoken.includes(storyWordsLower[matchIdx])
-            ) {
-              newHighlighted.add(matchIdx);
-              matchIdx++;
-              break;
+        for (let j = storyIdx; j < searchEnd; j++) {
+          const storyWord = storyWordsNorm[j];
+          if (
+            storyWord === spoken ||
+            (storyWord.length > 2 && spoken.length > 2 && (storyWord.startsWith(spoken) || spoken.startsWith(storyWord)))
+          ) {
+            for (let k = storyIdx; k <= j; k++) {
+              newHighlighted.add(k);
             }
-            if (matchIdx < matchIndexRef.current + 3) {
-              matchIdx++;
-            } else {
-              break;
-            }
+            storyIdx = j + 1;
+            found = true;
+            break;
           }
         }
+      }
 
-        if (matchIdx > matchIndexRef.current) {
-          matchIndexRef.current = matchIdx;
-        }
+      if (storyIdx > matchIndexRef.current) {
+        matchIndexRef.current = storyIdx;
+      }
 
-        for (let i = 0; i < matchIndexRef.current; i++) {
-          newHighlighted.add(i);
-        }
+      for (let i = 0; i < matchIndexRef.current; i++) {
+        newHighlighted.add(i);
+      }
 
-        setHighlightedWords(newHighlighted);
-        setCurrentWordIndex(matchIndexRef.current - 1);
-      };
+      setHighlightedWords(new Set(newHighlighted));
+      setCurrentWordIndex(Math.max(matchIndexRef.current - 1, 0));
+    };
 
-      recognition.onerror = (event: any) => {
-        if (event.error !== "no-speech") {
-          console.error("Speech recognition error:", event.error);
-        }
-      };
-
-      recognition.onend = () => {
-        if (modeRef.current === "record") {
-          try {
-            recognition.start();
-          } catch (e) {}
-        }
-      };
-
-      try {
-        recognition.start();
-      } catch (e) {
-        Alert.alert("Error", "Could not start speech recognition.");
+    recognition.onerror = (event: any) => {
+      if (event.error === "no-speech") return;
+      if (event.error === "aborted") return;
+      console.warn("Speech recognition error:", event.error);
+      if (event.error === "not-allowed") {
+        setRecordError("Microphone access was denied. Please allow microphone access and try again.");
         setMode("idle");
         modeRef.current = "idle";
       }
-    } else {
-      try {
-        const permissionStatus = await AudioModule.requestRecordingPermissionsAsync();
-        if (!permissionStatus.granted) {
-          Alert.alert(
-            "Permission Required",
-            "Microphone access is needed to record your reading."
-          );
-          setMode("idle");
-          modeRef.current = "idle";
-          return;
-        }
+    };
 
-        let wordIndex = 0;
-        const msPerWord = 500;
-        intervalRef.current = setInterval(() => {
-          if (modeRef.current !== "record") {
-            if (intervalRef.current) clearInterval(intervalRef.current);
-            return;
-          }
-          if (wordIndex < wordsRef.current.length) {
-            setCurrentWordIndex(wordIndex);
-            setHighlightedWords((prev) => {
-              const next = new Set(prev);
-              next.add(wordIndex);
-              return next;
-            });
-            wordIndex++;
-          } else {
-            if (intervalRef.current) clearInterval(intervalRef.current);
-            stopRecord();
-          }
-        }, msPerWord);
-      } catch (e) {
-        console.error("Recording error:", e);
-        setMode("idle");
-        modeRef.current = "idle";
+    recognition.onend = () => {
+      if (modeRef.current === "record") {
+        try {
+          recognition.start();
+        } catch (e) {}
       }
+    };
+
+    try {
+      recognition.start();
+    } catch (e) {
+      setRecordError("Could not start speech recognition. Please try again.");
+      setMode("idle");
+      modeRef.current = "idle";
     }
   }, [mode, stopRecord]);
 
   useEffect(() => {
     return () => {
       Speech.stop();
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+      if (explainIntervalRef.current) {
+        clearInterval(explainIntervalRef.current);
       }
       if (recognitionRef.current) {
         try {
-          recognitionRef.current.stop();
+          recognitionRef.current.abort();
         } catch (e) {}
       }
     };
@@ -389,7 +370,7 @@ export default function StoryScreen() {
             <View style={styles.modeIndicator}>
               <PulsingDot />
               <Text style={styles.modeText}>
-                {mode === "explain" ? "Listening..." : "Recording..."}
+                {mode === "explain" ? "Speaking..." : "Listening..."}
               </Text>
             </View>
           )}
@@ -415,6 +396,22 @@ export default function StoryScreen() {
 
         <View style={styles.divider} />
 
+        {recordError && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle" size={18} color={Colors.accent} />
+            <Text style={styles.errorBannerText}>{recordError}</Text>
+          </View>
+        )}
+
+        {mode === "record" && !recordError && (
+          <View style={styles.recordHint}>
+            <Ionicons name="mic" size={16} color={Colors.accentGreen} />
+            <Text style={styles.recordHintText}>
+              Start reading aloud — words will highlight as you speak
+            </Text>
+          </View>
+        )}
+
         <View style={styles.textContainer}>
           <Text style={styles.storyText}>
             {words.map((word, index) => (
@@ -422,11 +419,8 @@ export default function StoryScreen() {
                 key={index}
                 word={word}
                 index={index}
-                isHighlighted={
-                  mode === "explain"
-                    ? index === currentWordIndex
-                    : highlightedWords.has(index)
-                }
+                isHighlighted={highlightedWords.has(index)}
+                isCurrent={index === currentWordIndex}
                 isUnderlined={
                   mode === "explain" && index <= currentWordIndex && currentWordIndex >= 0
                 }
@@ -436,7 +430,7 @@ export default function StoryScreen() {
           </Text>
         </View>
 
-        {mode === "record" && (
+        {mode === "record" && highlightedWords.size > 0 && (
           <View style={styles.progressContainer}>
             <View style={styles.progressBar}>
               <View
@@ -444,7 +438,7 @@ export default function StoryScreen() {
                   styles.progressFill,
                   {
                     width: `${Math.min(
-                      ((highlightedWords.size || 0) / words.length) * 100,
+                      (highlightedWords.size / words.length) * 100,
                       100
                     )}%`,
                   },
@@ -452,7 +446,7 @@ export default function StoryScreen() {
               />
             </View>
             <Text style={styles.progressText}>
-              {highlightedWords.size} / {words.length} words
+              {highlightedWords.size} / {words.length} words read
             </Text>
           </View>
         )}
@@ -615,6 +609,44 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: Colors.border,
     marginVertical: 20,
+  },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(255, 107, 107, 0.15)",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255, 107, 107, 0.3)",
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: Colors.accent,
+    lineHeight: 18,
+  },
+  recordHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(78, 205, 196, 0.12)",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(78, 205, 196, 0.25)",
+  },
+  recordHintText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: Colors.accentGreen,
+    lineHeight: 18,
   },
   textContainer: {
     paddingBottom: 16,
