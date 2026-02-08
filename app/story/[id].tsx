@@ -6,7 +6,8 @@ import {
   ScrollView,
   Pressable,
   Platform,
-  Alert,
+  Image,
+  useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -32,14 +33,12 @@ function normalizeWord(w: string): string {
 
 function WordToken({
   word,
-  index,
   isHighlighted,
   isUnderlined,
   isCurrent,
   mode,
 }: {
   word: string;
-  index: number;
   isHighlighted: boolean;
   isUnderlined: boolean;
   isCurrent: boolean;
@@ -67,7 +66,7 @@ function WordToken({
           borderBottomColor: underlineColor,
           borderRadius: isHighlighted || isCurrent ? 4 : 0,
           paddingHorizontal: isHighlighted || isCurrent ? 2 : 0,
-          color: isHighlighted && mode === "record" ? Colors.accentGreen : Colors.text,
+          color: isHighlighted && mode === "record" ? Colors.accentGreen : "#3B2F1E",
         },
       ]}
     >
@@ -106,6 +105,7 @@ export default function StoryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const story = stories.find((s) => s.id === id);
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
   const webTopInset = Platform.OS === "web" ? 67 : 0;
   const webBottomInset = Platform.OS === "web" ? 34 : 0;
 
@@ -129,6 +129,9 @@ export default function StoryScreen() {
 
   const words = story.content.split(/\s+/);
   wordsRef.current = words;
+
+  const isWide = screenWidth > 600;
+  const imageWidth = isWide ? screenWidth * 0.38 : screenWidth * 0.35;
 
   const stopExplain = useCallback(() => {
     Speech.stop();
@@ -271,7 +274,6 @@ export default function StoryScreen() {
         if (!spoken) continue;
 
         let searchEnd = Math.min(storyIdx + 5, storyWordsNorm.length);
-        let found = false;
 
         for (let j = storyIdx; j < searchEnd; j++) {
           const storyWord = storyWordsNorm[j];
@@ -283,7 +285,6 @@ export default function StoryScreen() {
               newHighlighted.add(k);
             }
             storyIdx = j + 1;
-            found = true;
             break;
           }
         }
@@ -302,8 +303,7 @@ export default function StoryScreen() {
     };
 
     recognition.onerror = (event: any) => {
-      if (event.error === "no-speech") return;
-      if (event.error === "aborted") return;
+      if (event.error === "no-speech" || event.error === "aborted") return;
       console.warn("Speech recognition error:", event.error);
       if (event.error === "not-allowed") {
         setRecordError("Microphone access was denied. Please allow microphone access and try again.");
@@ -383,73 +383,95 @@ export default function StoryScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding + 100 }]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.storyHeader}>
-          <Text style={styles.storyCategory}>{story.category}</Text>
-          <Text style={styles.storyTitle}>{story.title}</Text>
-          <View style={styles.storyMeta}>
-            <Text style={styles.storyAuthor}>by {story.author}</Text>
-            <View style={styles.metaDot} />
-            <Ionicons name="time-outline" size={14} color={Colors.textMuted} />
-            <Text style={styles.storyReadTime}>{story.readTime}</Text>
-          </View>
-        </View>
+        <View style={styles.bookContainer}>
+          <View style={styles.bookSpine} />
 
-        <View style={styles.divider} />
+          <View style={styles.bookPage}>
+            <View style={[styles.bookLayout, !isWide && styles.bookLayoutNarrow]}>
+              <View style={[styles.imageSection, { width: isWide ? imageWidth : "100%" }]}>
+                <Image
+                  source={story.image}
+                  style={[
+                    styles.storyImage,
+                    !isWide && { height: 220 },
+                  ]}
+                  resizeMode="cover"
+                />
+                <View style={styles.imageCaption}>
+                  <Text style={styles.imageCaptionTitle}>{story.title}</Text>
+                  <Text style={styles.imageCaptionAuthor}>by {story.author}</Text>
+                  <View style={styles.imageCaptionMeta}>
+                    <View style={styles.ageTag}>
+                      <Text style={styles.ageTagText}>
+                        Ages {story.ageMin}-{story.ageMax}
+                      </Text>
+                    </View>
+                    <Text style={styles.imageCaptionTime}>{story.readTime} read</Text>
+                  </View>
+                </View>
+              </View>
 
-        {recordError && (
-          <View style={styles.errorBanner}>
-            <Ionicons name="alert-circle" size={18} color={Colors.accent} />
-            <Text style={styles.errorBannerText}>{recordError}</Text>
-          </View>
-        )}
+              <View style={[styles.textSection, isWide && { flex: 1 }]}>
+                {recordError && (
+                  <View style={styles.errorBanner}>
+                    <Ionicons name="alert-circle" size={16} color="#C0392B" />
+                    <Text style={styles.errorBannerText}>{recordError}</Text>
+                  </View>
+                )}
 
-        {mode === "record" && !recordError && (
-          <View style={styles.recordHint}>
-            <Ionicons name="mic" size={16} color={Colors.accentGreen} />
-            <Text style={styles.recordHintText}>
-              Start reading aloud — words will highlight as you speak
-            </Text>
-          </View>
-        )}
+                {mode === "record" && !recordError && (
+                  <View style={styles.recordHint}>
+                    <Ionicons name="mic" size={14} color="#27AE60" />
+                    <Text style={styles.recordHintText}>
+                      Read aloud — words highlight as you speak
+                    </Text>
+                  </View>
+                )}
 
-        <View style={styles.textContainer}>
-          <Text style={styles.storyText}>
-            {words.map((word, index) => (
-              <WordToken
-                key={index}
-                word={word}
-                index={index}
-                isHighlighted={highlightedWords.has(index)}
-                isCurrent={index === currentWordIndex}
-                isUnderlined={
-                  mode === "explain" && index <= currentWordIndex && currentWordIndex >= 0
-                }
-                mode={mode}
-              />
-            ))}
-          </Text>
-        </View>
+                <Text style={styles.storyText}>
+                  {words.map((word, index) => (
+                    <WordToken
+                      key={index}
+                      word={word}
+                      isHighlighted={highlightedWords.has(index)}
+                      isCurrent={index === currentWordIndex}
+                      isUnderlined={
+                        mode === "explain" && index <= currentWordIndex && currentWordIndex >= 0
+                      }
+                      mode={mode}
+                    />
+                  ))}
+                </Text>
 
-        {mode === "record" && highlightedWords.size > 0 && (
-          <View style={styles.progressContainer}>
-            <View style={styles.progressBar}>
-              <View
-                style={[
-                  styles.progressFill,
-                  {
-                    width: `${Math.min(
-                      (highlightedWords.size / words.length) * 100,
-                      100
-                    )}%`,
-                  },
-                ]}
-              />
+                <View style={styles.moralBox}>
+                  <Ionicons name="sparkles" size={14} color="#D4A574" />
+                  <Text style={styles.moralText}>{story.moral}</Text>
+                </View>
+              </View>
             </View>
-            <Text style={styles.progressText}>
-              {highlightedWords.size} / {words.length} words read
-            </Text>
+
+            {mode === "record" && highlightedWords.size > 0 && (
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        width: `${Math.min(
+                          (highlightedWords.size / words.length) * 100,
+                          100
+                        )}%`,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressText}>
+                  {highlightedWords.size} / {words.length} words read
+                </Text>
+              </View>
+            )}
           </View>
-        )}
+        </View>
       </ScrollView>
 
       <View style={[styles.bottomBar, { paddingBottom: bottomPadding + 12 }]}>
@@ -562,104 +584,154 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 22,
-    paddingTop: 24,
+    padding: 16,
   },
-  storyHeader: {
-    marginBottom: 16,
+  bookContainer: {
+    flexDirection: "row",
   },
-  storyCategory: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.primary,
-    textTransform: "uppercase" as const,
-    letterSpacing: 1.2,
-    marginBottom: 8,
+  bookSpine: {
+    width: 6,
+    backgroundColor: "#8B6F4E",
+    borderTopLeftRadius: 4,
+    borderBottomLeftRadius: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
-  storyTitle: {
-    fontSize: 28,
+  bookPage: {
+    flex: 1,
+    backgroundColor: "#FDF8F0",
+    borderTopRightRadius: 8,
+    borderBottomRightRadius: 8,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 2, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  bookLayout: {
+    flexDirection: "row",
+    gap: 16,
+  },
+  bookLayoutNarrow: {
+    flexDirection: "column",
+  },
+  imageSection: {
+    overflow: "hidden",
+  },
+  storyImage: {
+    width: "100%",
+    height: "100%",
+    minHeight: 180,
+    borderRadius: 10,
+  },
+  imageCaption: {
+    marginTop: 10,
+    paddingBottom: 4,
+  },
+  imageCaptionTitle: {
+    fontSize: 18,
     fontFamily: "PlayfairDisplay_700Bold",
-    color: Colors.text,
-    lineHeight: 36,
+    color: "#3B2F1E",
+    lineHeight: 24,
   },
-  storyMeta: {
+  imageCaptionAuthor: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#8B7355",
+    marginTop: 2,
+  },
+  imageCaptionMeta: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 12,
-    gap: 6,
+    gap: 10,
+    marginTop: 8,
   },
-  storyAuthor: {
-    fontSize: 14,
+  ageTag: {
+    backgroundColor: "#E8DDD0",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  ageTagText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: "#6B5B47",
+  },
+  imageCaptionTime: {
+    fontSize: 12,
     fontFamily: "Inter_400Regular",
-    color: Colors.textSecondary,
+    color: "#A0916E",
   },
-  metaDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: Colors.textMuted,
-  },
-  storyReadTime: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textMuted,
-    marginLeft: 2,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginVertical: 20,
+  textSection: {
+    minHeight: 100,
   },
   errorBanner: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    backgroundColor: "rgba(255, 107, 107, 0.15)",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    marginBottom: 16,
+    gap: 6,
+    backgroundColor: "rgba(192, 57, 43, 0.1)",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: "rgba(255, 107, 107, 0.3)",
+    borderColor: "rgba(192, 57, 43, 0.2)",
   },
   errorBannerText: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: "Inter_500Medium",
-    color: Colors.accent,
-    lineHeight: 18,
+    color: "#C0392B",
+    lineHeight: 16,
   },
   recordHint: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    backgroundColor: "rgba(78, 205, 196, 0.12)",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    marginBottom: 16,
+    gap: 6,
+    backgroundColor: "rgba(39, 174, 96, 0.1)",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: "rgba(78, 205, 196, 0.25)",
+    borderColor: "rgba(39, 174, 96, 0.2)",
   },
   recordHintText: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: "Inter_500Medium",
-    color: Colors.accentGreen,
-    lineHeight: 18,
-  },
-  textContainer: {
-    paddingBottom: 16,
+    color: "#27AE60",
+    lineHeight: 16,
   },
   storyText: {
     flexDirection: "row",
     flexWrap: "wrap",
   },
   word: {
-    fontSize: 18,
+    fontSize: 16,
     fontFamily: "Inter_400Regular",
-    color: Colors.text,
-    lineHeight: 32,
+    color: "#3B2F1E",
+    lineHeight: 28,
+  },
+  moralBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginTop: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: "#E5DDD0",
+  },
+  moralText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "PlayfairDisplay_700Bold",
+    color: "#8B6F4E",
+    fontStyle: "italic",
+    lineHeight: 20,
   },
   progressContainer: {
     marginTop: 16,
@@ -667,21 +739,21 @@ const styles = StyleSheet.create({
   },
   progressBar: {
     width: "100%",
-    height: 6,
-    backgroundColor: Colors.surfaceLight,
+    height: 5,
+    backgroundColor: "#E5DDD0",
     borderRadius: 3,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    backgroundColor: Colors.accentGreen,
+    backgroundColor: "#27AE60",
     borderRadius: 3,
   },
   progressText: {
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: "Inter_500Medium",
-    color: Colors.textSecondary,
-    marginTop: 8,
+    color: "#8B7355",
+    marginTop: 6,
   },
   bottomBar: {
     flexDirection: "row",
