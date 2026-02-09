@@ -17,6 +17,7 @@ const Colors = {
   highlight: "rgba(245, 166, 35, 0.25)",
   highlightRecord: "rgba(78, 205, 196, 0.3)",
   underline: "#F5A623",
+  missedWord: "#E74C3C",
 };
 
 export default Colors;
