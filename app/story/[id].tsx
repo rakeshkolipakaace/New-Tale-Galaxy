@@ -150,7 +150,10 @@ export default function StoryScreen() {
       setHighlightedWords(new Set());
       setSkippedWords(new Set());
       if (mode === "explain") stopExplain();
-      if (mode === "record") stopRecord();
+      // Keep recording active when manually moving to next page
+      if (mode === "record") {
+        matchIndexRef.current = 0;
+      }
     }
   };
 
@@ -161,7 +164,10 @@ export default function StoryScreen() {
       setHighlightedWords(new Set());
       setSkippedWords(new Set());
       if (mode === "explain") stopExplain();
-      if (mode === "record") stopRecord();
+      // Keep recording active when manually moving to prev page
+      if (mode === "record") {
+        matchIndexRef.current = 0;
+      }
     }
   };
 
@@ -395,11 +401,14 @@ export default function StoryScreen() {
           const nextPage = currentPageRef.current + 1;
           // Save skipped words before moving to next page
           const currentSkippedIndices = Array.from(newSkipped);
-          if (currentSkippedIndices.length > 0) {
-            const pageWords = wordsRef.current;
-            const skippedTexts = currentSkippedIndices
-              .sort((a, b) => a - b)
-              .map((idx) => pageWords[idx]);
+
+          // Identify which words were actually missed on this page
+          const pageWords = wordsRef.current;
+          const skippedTexts = currentSkippedIndices
+            .sort((a, b) => a - b)
+            .map((idx) => pageWords[idx]);
+
+          if (skippedTexts.length > 0) {
             setAllSkippedWords((prev) => {
               const existing = prev.find((p) => p.page === currentPageRef.current);
               if (existing) {
@@ -411,6 +420,11 @@ export default function StoryScreen() {
             });
           }
 
+          // STOP: We don't auto-advance in record mode anymore. 
+          // The user must click the next button or stop recording.
+          // This fixes the "jumping to next next page" issue.
+
+          /* 
           setTimeout(() => {
             if (modeRef.current === "record") {
               setCurrentPage(nextPage);
@@ -420,6 +434,7 @@ export default function StoryScreen() {
               matchIndexRef.current = 0;
             }
           }, 1000);
+          */
         } else {
           // Last page completed in record mode
           const currentSkippedIndices = Array.from(newSkipped);
