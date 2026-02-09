@@ -101,8 +101,10 @@ export default function StoryScreen() {
   const [currentWordIndex, setCurrentWordIndex] = useState(-1);
   const [highlightedWords, setHighlightedWords] = useState<Set<number>>(new Set());
   const [skippedWords, setSkippedWords] = useState<Set<number>>(new Set());
+  const [allSkippedWords, setAllSkippedWords] = useState<{ page: number; words: string[] }[]>([]);
   const [recordError, setRecordError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const [showSummary, setShowSummary] = useState(false);
 
   const currentPageRef = useRef(0);
   const modeRef = useRef<Mode>("idle");
@@ -260,6 +262,25 @@ export default function StoryScreen() {
   }, [mode, speakCurrentPageAndContinue, stopExplain]);
 
   const stopRecord = useCallback(() => {
+    if (modeRef.current === "record") {
+      const pageWords = wordsRef.current;
+      const currentSkippedIndices = Array.from(skippedWords);
+      if (currentSkippedIndices.length > 0) {
+        const skippedTexts = currentSkippedIndices
+          .sort((a, b) => a - b)
+          .map((idx) => pageWords[idx]);
+        setAllSkippedWords((prev) => {
+          const existing = prev.find((p) => p.page === currentPageRef.current);
+          if (existing) {
+            return prev.map((p) =>
+              p.page === currentPageRef.current ? { ...p, words: skippedTexts } : p
+            );
+          }
+          return [...prev, { page: currentPageRef.current, words: skippedTexts }];
+        });
+      }
+    }
+
     setMode("idle");
     modeRef.current = "idle";
     setCurrentWordIndex(-1);
@@ -270,7 +291,7 @@ export default function StoryScreen() {
       } catch (e) { }
       recognitionRef.current = null;
     }
-  }, []);
+  }, [skippedWords]);
 
   const startRecord = useCallback(() => {
     if (mode === "explain") return;
@@ -372,6 +393,24 @@ export default function StoryScreen() {
       if (storyIdx >= storyWordsNorm.length && storyWordsNorm.length > 0) {
         if (currentPageRef.current < story.pages.length - 1) {
           const nextPage = currentPageRef.current + 1;
+          // Save skipped words before moving to next page
+          const currentSkippedIndices = Array.from(newSkipped);
+          if (currentSkippedIndices.length > 0) {
+            const pageWords = wordsRef.current;
+            const skippedTexts = currentSkippedIndices
+              .sort((a, b) => a - b)
+              .map((idx) => pageWords[idx]);
+            setAllSkippedWords((prev) => {
+              const existing = prev.find((p) => p.page === currentPageRef.current);
+              if (existing) {
+                return prev.map((p) =>
+                  p.page === currentPageRef.current ? { ...p, words: skippedTexts } : p
+                );
+              }
+              return [...prev, { page: currentPageRef.current, words: skippedTexts }];
+            });
+          }
+
           setTimeout(() => {
             if (modeRef.current === "record") {
               setCurrentPage(nextPage);
@@ -381,6 +420,28 @@ export default function StoryScreen() {
               matchIndexRef.current = 0;
             }
           }, 1000);
+        } else {
+          // Last page completed in record mode
+          const currentSkippedIndices = Array.from(newSkipped);
+          if (currentSkippedIndices.length > 0) {
+            const pageWords = wordsRef.current;
+            const skippedTexts = currentSkippedIndices
+              .sort((a, b) => a - b)
+              .map((idx) => pageWords[idx]);
+            setAllSkippedWords((prev) => {
+              const existing = prev.find((p) => p.page === currentPageRef.current);
+              if (existing) {
+                return prev.map((p) =>
+                  p.page === currentPageRef.current ? { ...p, words: skippedTexts } : p
+                );
+              }
+              return [...prev, { page: currentPageRef.current, words: skippedTexts }];
+            });
+          }
+          setTimeout(() => {
+            stopRecord();
+            setShowSummary(true);
+          }, 1500);
         }
       }
     };
@@ -450,6 +511,48 @@ export default function StoryScreen() {
 
   return (
     <View style={styles.container}>
+      {showSummary && (
+        <View style={[StyleSheet.absoluteFill, styles.summaryOverlay, { zIndex: 2000 }]}>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryTitle}>Reading Summary</Text>
+            <ScrollView style={styles.summaryScroll}>
+              {allSkippedWords.length > 0 ? (
+                <>
+                  <Text style={styles.summarySubtitle}>Words to practice:</Text>
+                  {allSkippedWords.map((p, i) => (
+                    <View key={i} style={styles.summaryPageRow}>
+                      <Text style={styles.summaryPageLabel}>Page {p.page + 1}:</Text>
+                      <View style={styles.summaryWordsList}>
+                        {p.words.map((w, j) => (
+                          <View key={j} style={styles.summaryWordBadge}>
+                            <Text style={styles.summaryWordText}>{w}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  ))}
+                </>
+              ) : (
+                <View style={styles.perfectScore}>
+                  <Ionicons name="trophy" size={48} color="#D4A574" />
+                  <Text style={styles.perfectText}>Perfect Reading!</Text>
+                  <Text style={styles.perfectSub}>You didn't skip any words.</Text>
+                </View>
+              )}
+            </ScrollView>
+            <Pressable
+              onPress={() => {
+                setShowSummary(false);
+                setAllSkippedWords([]);
+              }}
+              style={({ pressed }) => [styles.summaryCloseBtn, { opacity: pressed ? 0.8 : 1 }]}
+            >
+              <Text style={styles.summaryCloseText}>Back to Story</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       <Pressable
         onPress={() => {
           stopExplain();
@@ -914,5 +1017,101 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: "Inter_500Medium",
     color: Colors.textSecondary,
+  },
+  summaryOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  summaryCard: {
+    backgroundColor: "#FDF8F0",
+    borderRadius: 20,
+    width: "100%",
+    maxHeight: "80%",
+    padding: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  summaryTitle: {
+    fontSize: 24,
+    fontFamily: "PlayfairDisplay_700Bold",
+    color: "#3B2F1E",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  summarySubtitle: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: "#8B7355",
+    marginBottom: 12,
+  },
+  summaryScroll: {
+    marginBottom: 20,
+  },
+  summaryPageRow: {
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E8DDD0",
+    paddingBottom: 12,
+  },
+  summaryPageLabel: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#A0916E",
+    marginBottom: 8,
+  },
+  summaryWordsList: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  summaryWordBadge: {
+    backgroundColor: "rgba(192, 57, 43, 0.1)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(192, 57, 43, 0.2)",
+  },
+  summaryWordText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#C0392B",
+  },
+  summaryCloseBtn: {
+    backgroundColor: "#3B2F1E",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  summaryCloseText: {
+    color: "#FDF8F0",
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+  },
+  perfectScore: {
+    alignItems: "center",
+    paddingVertical: 30,
+  },
+  perfectText: {
+    fontSize: 20,
+    fontFamily: "PlayfairDisplay_700Bold",
+    color: "#3B2F1E",
+    marginTop: 16,
+  },
+  perfectSub: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: "#8B7355",
+    marginTop: 4,
   },
 });
