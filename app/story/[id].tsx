@@ -113,6 +113,7 @@ export default function StoryScreen() {
   const [currentWordIndex, setCurrentWordIndex] = useState(-1);
   const [highlightedWords, setHighlightedWords] = useState<Set<number>>(new Set());
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
   const modeRef = useRef<Mode>("idle");
   const recognitionRef = useRef<any>(null);
   const explainIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -127,7 +128,8 @@ export default function StoryScreen() {
     );
   }
 
-  const words = story.content.split(/\s+/);
+  const currentPageData = story.pages[currentPage];
+  const words = currentPageData.text.split(/\s+/);
   wordsRef.current = words;
 
   const isWide = screenWidth > 600;
@@ -143,6 +145,34 @@ export default function StoryScreen() {
     modeRef.current = "idle";
     setCurrentWordIndex(-1);
   }, []);
+
+  const goToNextPage = () => {
+    if (currentPage < story.pages.length - 1) {
+      setCurrentPage(currentPage + 1);
+      setCurrentWordIndex(-1);
+      setHighlightedWords(new Set());
+      if (mode === "explain") {
+        stopExplain();
+      }
+      if (mode === "record") {
+        stopRecord();
+      }
+    }
+  };
+
+  const goToPrevPage = () => {
+    if (currentPage > 0) {
+      setCurrentPage(currentPage - 1);
+      setCurrentWordIndex(-1);
+      setHighlightedWords(new Set());
+      if (mode === "explain") {
+        stopExplain();
+      }
+      if (mode === "record") {
+        stopRecord();
+      }
+    }
+  };
 
   const startExplain = useCallback(() => {
     if (mode === "record") return;
@@ -161,7 +191,7 @@ export default function StoryScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    const fullText = story.content;
+    const fullText = currentPageData.text;
     const totalWords = words.length;
     const speechRate = 0.85;
     const msPerWord = (60 / (150 * speechRate)) * 1000;
@@ -207,7 +237,7 @@ export default function StoryScreen() {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
-      } catch (e) {}
+      } catch (e) { }
       recognitionRef.current = null;
     }
   }, []);
@@ -316,7 +346,7 @@ export default function StoryScreen() {
       if (modeRef.current === "record") {
         try {
           recognition.start();
-        } catch (e) {}
+        } catch (e) { }
       }
     };
 
@@ -338,7 +368,7 @@ export default function StoryScreen() {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
-        } catch (e) {}
+        } catch (e) { }
       }
     };
   }, []);
@@ -346,37 +376,40 @@ export default function StoryScreen() {
   const topPadding = Platform.OS === "web" ? webTopInset : insets.top;
   const bottomPadding = Platform.OS === "web" ? webBottomInset : insets.bottom;
 
+  const backButtonOverlayStyle = {
+    position: "absolute" as const,
+    top: topPadding + 8,
+    left: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    zIndex: 1000,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 4,
+  };
+
   return (
     <View style={styles.container}>
-      <View style={[styles.topBar, { paddingTop: topPadding + 8 }]}>
-        <Pressable
-          onPress={() => {
-            stopExplain();
-            stopRecord();
-            router.back();
-          }}
-          style={({ pressed }) => [
-            styles.backBtn,
-            { opacity: pressed ? 0.7 : 1 },
-          ]}
-        >
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
-        </Pressable>
-        <View style={styles.topBarCenter}>
-          <Text style={styles.topBarTitle} numberOfLines={1}>
-            {story.title}
-          </Text>
-          {mode !== "idle" && (
-            <View style={styles.modeIndicator}>
-              <PulsingDot />
-              <Text style={styles.modeText}>
-                {mode === "explain" ? "Speaking..." : "Listening..."}
-              </Text>
-            </View>
-          )}
-        </View>
-        <View style={{ width: 40 }} />
-      </View>
+      {/* Minimal Back Button Overlay */}
+      <Pressable
+        onPress={() => {
+          stopExplain();
+          stopRecord();
+          router.back();
+        }}
+        style={({ pressed }) => [
+          backButtonOverlayStyle,
+          { opacity: pressed ? 0.7 : 1 },
+        ]}
+      >
+        <Ionicons name="arrow-back" size={22} color={Colors.text} />
+      </Pressable>
 
       <ScrollView
         style={styles.scrollView}
@@ -390,11 +423,12 @@ export default function StoryScreen() {
             <View style={[styles.bookLayout, !isWide && styles.bookLayoutNarrow]}>
               <View style={[styles.imageSection, { width: isWide ? imageWidth : "100%" }]}>
                 <Image
-                  source={story.image}
+                  source={currentPageData.image || story.image}
                   style={[
                     styles.storyImage,
                     !isWide && { height: 220 },
                   ]}
+                  resizeMode="cover"
                 />
                 <View style={styles.imageCaption}>
                   <Text style={styles.imageCaptionTitle}>{story.title}</Text>
@@ -406,6 +440,11 @@ export default function StoryScreen() {
                       </Text>
                     </View>
                     <Text style={styles.imageCaptionTime}>{story.readTime} read</Text>
+                  </View>
+                  <View style={styles.pageIndicator}>
+                    <Text style={styles.pageIndicatorText}>
+                      Page {currentPage + 1} of {story.pages.length}
+                    </Text>
                   </View>
                 </View>
               </View>
@@ -442,10 +481,12 @@ export default function StoryScreen() {
                   ))}
                 </Text>
 
-                <View style={styles.moralBox}>
-                  <Ionicons name="sparkles" size={14} color="#D4A574" />
-                  <Text style={styles.moralText}>{story.moral}</Text>
-                </View>
+                {currentPage === story.pages.length - 1 && (
+                  <View style={styles.moralBox}>
+                    <Ionicons name="sparkles" size={14} color="#D4A574" />
+                    <Text style={styles.moralText}>{story.moral}</Text>
+                  </View>
+                )}
               </View>
             </View>
 
@@ -469,6 +510,49 @@ export default function StoryScreen() {
                 </Text>
               </View>
             )}
+
+            {/* Page Navigation */}
+            <View style={styles.pageNavigation}>
+              <Pressable
+                onPress={goToPrevPage}
+                style={({ pressed }) => [
+                  styles.navButton,
+                  styles.prevButton,
+                  currentPage === 0 && styles.navButtonDisabled,
+                  { opacity: pressed ? 0.7 : (currentPage === 0 ? 0.4 : 1) },
+                ]}
+                disabled={currentPage === 0}
+              >
+                <Ionicons name="chevron-back" size={20} color={Colors.text} />
+                <Text style={styles.navButtonText}>Previous</Text>
+              </Pressable>
+
+              <View style={styles.pageDots}>
+                {story.pages.map((_, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.pageDot,
+                      index === currentPage && styles.pageDotActive,
+                    ]}
+                  />
+                ))}
+              </View>
+
+              <Pressable
+                onPress={goToNextPage}
+                style={({ pressed }) => [
+                  styles.navButton,
+                  styles.nextButton,
+                  currentPage === story.pages.length - 1 && styles.navButtonDisabled,
+                  { opacity: pressed ? 0.7 : (currentPage === story.pages.length - 1 ? 0.4 : 1) },
+                ]}
+                disabled={currentPage === story.pages.length - 1}
+              >
+                <Text style={styles.navButtonText}>Next</Text>
+                <Ionicons name="chevron-forward" size={20} color={Colors.text} />
+              </Pressable>
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -535,33 +619,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: Colors.surfaceLight,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  topBarCenter: {
-    flex: 1,
-    alignItems: "center",
-    marginHorizontal: 8,
-  },
-  topBarTitle: {
-    fontSize: 16,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.text,
-  },
   modeIndicator: {
     flexDirection: "row",
     alignItems: "center",
@@ -622,7 +679,7 @@ const styles = StyleSheet.create({
   },
   storyImage: {
     width: "100%",
-    height: "100%",
+    height: 200,
     minHeight: 180,
     borderRadius: 10,
   },
@@ -664,8 +721,22 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: "#A0916E",
   },
+  pageIndicator: {
+    marginTop: 8,
+    alignItems: "center",
+  },
+  pageIndicatorText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: "#8B7355",
+    backgroundColor: "#F0E6D9",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
   textSection: {
     minHeight: 100,
+    backgroundColor: "transparent",
   },
   errorBanner: {
     flexDirection: "row",
@@ -708,6 +779,9 @@ const styles = StyleSheet.create({
   storyText: {
     flexDirection: "row",
     flexWrap: "wrap",
+    backgroundColor: "transparent",
+    padding: 8,
+    borderRadius: 4,
   },
   word: {
     fontSize: 16,
@@ -805,5 +879,51 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: "Inter_500Medium",
     color: Colors.textSecondary,
+  },
+  pageNavigation: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 20,
+    paddingHorizontal: 8,
+  },
+  navButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: Colors.surfaceLight,
+  },
+  navButtonDisabled: {
+    opacity: 0.4,
+  },
+  prevButton: {
+    borderTopLeftRadius: 20,
+    borderBottomLeftRadius: 20,
+  },
+  nextButton: {
+    borderTopRightRadius: 20,
+    borderBottomRightRadius: 20,
+  },
+  navButtonText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+  },
+  pageDots: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  pageDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#D4C4B0",
+  },
+  pageDotActive: {
+    backgroundColor: Colors.primary,
+    width: 20,
   },
 });
