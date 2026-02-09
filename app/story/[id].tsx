@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   StyleSheet,
@@ -15,14 +14,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Speech from "expo-speech";
 import * as Haptics from "expo-haptics";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withSequence,
-  withTiming,
-  Easing,
-} from "react-native-reanimated";
 import Colors from "@/constants/colors";
 import { stories } from "@/constants/stories";
 
@@ -132,6 +123,22 @@ export default function StoryScreen() {
   const isWide = screenWidth > 600;
   const imageWidth = isWide ? screenWidth * 0.38 : screenWidth * 0.35;
 
+  // ─── Helper: fully reset record mode state ───
+  const resetRecordState = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+        recognitionRef.current.abort();
+      } catch { }
+      recognitionRef.current = null;
+    }
+    matchIndexRef.current = 0;
+    setHighlightedWords(new Set());
+    setSkippedWords(new Set());
+    setCurrentWordIndex(-1);
+    setRecordError(null);
+  }, []);
+
   const stopExplain = useCallback(() => {
     Speech.stop();
     if (explainIntervalRef.current) {
@@ -143,33 +150,111 @@ export default function StoryScreen() {
     setCurrentWordIndex(-1);
   }, []);
 
-  const goToNextPage = () => {
-    if (currentPage < story.pages.length - 1) {
-      setCurrentPage(currentPage + 1);
-      setCurrentWordIndex(-1);
-      setHighlightedWords(new Set());
-      setSkippedWords(new Set());
-      if (mode === "explain") stopExplain();
-      // Keep recording active when manually moving to next page
-      if (mode === "record") {
-        matchIndexRef.current = 0;
-      }
-    }
-  };
+  const goToNextPage = useCallback(() => {
+    if (currentPage >= story.pages.length - 1) return;
 
-  const goToPrevPage = () => {
-    if (currentPage > 0) {
-      setCurrentPage(currentPage - 1);
+    if (mode === "explain") {
+      stopExplain();
+    }
+
+    // FIXED: Save skipped words before moving to next page in record mode
+    if (mode === "record") {
+      const pageWords = wordsRef.current;
+      const currentSkippedIndices = Array.from(skippedWords);
+      if (currentSkippedIndices.length > 0) {
+        const skippedTexts = currentSkippedIndices
+          .sort((a, b) => a - b)
+          .map((idx) => pageWords[idx]);
+        setAllSkippedWords((prev) => {
+          const existing = prev.find((p) => p.page === currentPage);
+          if (existing) {
+            return prev.map((p) =>
+              p.page === currentPage ? { ...p, words: skippedTexts } : p
+            );
+          }
+          return [...prev, { page: currentPage, words: skippedTexts }];
+        });
+      }
+
+      // Reset matching state
+      matchIndexRef.current = 0;
+      setHighlightedWords(new Set());
+      setSkippedWords(new Set());
+      setCurrentWordIndex(-1);
+
+      // Restart recognition to clear accumulated transcript
+      if (recognitionRef.current) {
+        try {
+          const currentRecognition = recognitionRef.current;
+          // Stop the recognition - this will trigger onend which will restart it
+          currentRecognition.stop();
+        } catch (e) {
+          console.warn("Error restarting recognition:", e);
+        }
+      }
+    }
+
+    setCurrentPage((prev) => prev + 1);
+
+    if (mode !== "record") {
       setCurrentWordIndex(-1);
       setHighlightedWords(new Set());
       setSkippedWords(new Set());
-      if (mode === "explain") stopExplain();
-      // Keep recording active when manually moving to prev page
-      if (mode === "record") {
-        matchIndexRef.current = 0;
+    }
+  }, [currentPage, mode, story.pages.length, stopExplain, skippedWords]);
+
+  const goToPrevPage = useCallback(() => {
+    if (currentPage <= 0) return;
+
+    if (mode === "explain") {
+      stopExplain();
+    }
+
+    // FIXED: Save skipped words before moving to previous page in record mode
+    if (mode === "record") {
+      const pageWords = wordsRef.current;
+      const currentSkippedIndices = Array.from(skippedWords);
+      if (currentSkippedIndices.length > 0) {
+        const skippedTexts = currentSkippedIndices
+          .sort((a, b) => a - b)
+          .map((idx) => pageWords[idx]);
+        setAllSkippedWords((prev) => {
+          const existing = prev.find((p) => p.page === currentPage);
+          if (existing) {
+            return prev.map((p) =>
+              p.page === currentPage ? { ...p, words: skippedTexts } : p
+            );
+          }
+          return [...prev, { page: currentPage, words: skippedTexts }];
+        });
+      }
+
+      // Reset matching state
+      matchIndexRef.current = 0;
+      setHighlightedWords(new Set());
+      setSkippedWords(new Set());
+      setCurrentWordIndex(-1);
+
+      // Restart recognition to clear accumulated transcript
+      if (recognitionRef.current) {
+        try {
+          const currentRecognition = recognitionRef.current;
+          // Stop the recognition - this will trigger onend which will restart it
+          currentRecognition.stop();
+        } catch (e) {
+          console.warn("Error restarting recognition:", e);
+        }
       }
     }
-  };
+
+    setCurrentPage((prev) => prev - 1);
+
+    if (mode !== "record") {
+      setCurrentWordIndex(-1);
+      setHighlightedWords(new Set());
+      setSkippedWords(new Set());
+    }
+  }, [currentPage, mode, stopExplain, skippedWords]);
 
   const speakCurrentPageAndContinue = useCallback(() => {
     const page = story.pages[currentPageRef.current];
@@ -180,14 +265,13 @@ export default function StoryScreen() {
     const totalWords = pageWords.length;
 
     const speechRate = 0.92;
-    const WORD_HIGHLIGHT_INTERVAL_MS = 320; // ← most important tuning value
+    const WORD_HIGHLIGHT_INTERVAL_MS = 320;
 
     let wordIdx = 0;
 
-    // Word-by-word highlight
     explainIntervalRef.current = setInterval(() => {
       if (modeRef.current !== "explain") {
-        clearIntervalIfExists();
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
         return;
       }
 
@@ -195,24 +279,16 @@ export default function StoryScreen() {
         setCurrentWordIndex(wordIdx);
         wordIdx++;
       } else {
-        clearIntervalIfExists();
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
       }
     }, WORD_HIGHLIGHT_INTERVAL_MS);
-
-    function clearIntervalIfExists() {
-      if (explainIntervalRef.current) {
-        clearInterval(explainIntervalRef.current);
-        explainIntervalRef.current = null;
-      }
-    }
 
     Speech.speak(fullText, {
       rate: speechRate,
       pitch: 1.0,
       language: "en-US",
-
       onDone: () => {
-        clearIntervalIfExists();
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
 
         if (modeRef.current !== "explain") return;
 
@@ -234,14 +310,12 @@ export default function StoryScreen() {
           setCurrentWordIndex(-1);
         }
       },
-
       onStopped: () => {
-        clearIntervalIfExists();
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
       },
-
       onError: (err) => {
         console.warn("Speech error:", err);
-        clearIntervalIfExists();
+        if (explainIntervalRef.current) clearInterval(explainIntervalRef.current);
       },
     });
   }, [story.pages]);
@@ -287,17 +361,10 @@ export default function StoryScreen() {
       }
     }
 
+    resetRecordState();
     setMode("idle");
     modeRef.current = "idle";
-    setCurrentWordIndex(-1);
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (e) { }
-      recognitionRef.current = null;
-    }
-  }, [skippedWords]);
+  }, [skippedWords, resetRecordState]);
 
   const startRecord = useCallback(() => {
     if (mode === "explain") return;
@@ -313,22 +380,18 @@ export default function StoryScreen() {
     setRecordError(null);
 
     const SpeechRecognitionAPI = getSpeechRecognitionAPI();
-
     if (!SpeechRecognitionAPI) {
       setRecordError(
         Platform.OS === "web"
-          ? "Speech recognition is not supported in this browser. Please open in Chrome."
-          : "Speech recognition requires a web browser. Open this app in Chrome for the Record feature."
+          ? "Speech recognition not supported in this browser. Try Chrome."
+          : "Speech recognition requires a browser with microphone support."
       );
       return;
     }
 
     setMode("record");
     modeRef.current = "record";
-    setCurrentWordIndex(-1);
-    setHighlightedWords(new Set());
-    setSkippedWords(new Set());
-    matchIndexRef.current = 0;
+    resetRecordState(); // clean start
 
     const recognition = new SpeechRecognitionAPI();
     recognition.continuous = true;
@@ -337,10 +400,13 @@ export default function StoryScreen() {
     recognition.maxAlternatives = 3;
     recognitionRef.current = recognition;
 
-    const storyWordsNorm = wordsRef.current.map(normalizeWord);
-
     recognition.onresult = (event: any) => {
       if (modeRef.current !== "record") return;
+      // FIXED: Removed the page mismatch check to allow continuous recording across pages
+
+      // ─── GET FRESH words every time a result arrives ───
+      const currentWords = wordsRef.current;
+      const storyWordsNorm = currentWords.map(normalizeWord);
 
       let fullTranscript = "";
       for (let i = 0; i < event.results.length; i++) {
@@ -364,6 +430,7 @@ export default function StoryScreen() {
 
         let searchEnd = Math.min(storyIdx + 5, storyWordsNorm.length);
 
+        let matched = false;
         for (let j = storyIdx; j < searchEnd; j++) {
           const storyWord = storyWordsNorm[j];
           if (
@@ -379,15 +446,18 @@ export default function StoryScreen() {
               newHighlighted.add(k);
             }
             storyIdx = j + 1;
+            matched = true;
             break;
           }
         }
+        // Optional: if no match at all after search window → could skip or penalize
       }
 
       if (storyIdx > matchIndexRef.current) {
         matchIndexRef.current = storyIdx;
       }
 
+      // Fill all previous as highlighted
       for (let i = 0; i < matchIndexRef.current; i++) {
         newHighlighted.add(i);
       }
@@ -396,109 +466,59 @@ export default function StoryScreen() {
       setSkippedWords(new Set(newSkipped));
       setCurrentWordIndex(Math.max(matchIndexRef.current - 1, 0));
 
-      if (storyIdx >= storyWordsNorm.length && storyWordsNorm.length > 0) {
-        if (currentPageRef.current < story.pages.length - 1) {
-          const nextPage = currentPageRef.current + 1;
-          // Save skipped words before moving to next page
-          const currentSkippedIndices = Array.from(newSkipped);
-
-          // Identify which words were actually missed on this page
-          const pageWords = wordsRef.current;
-          const skippedTexts = currentSkippedIndices
-            .sort((a, b) => a - b)
-            .map((idx) => pageWords[idx]);
-
-          if (skippedTexts.length > 0) {
-            setAllSkippedWords((prev) => {
-              const existing = prev.find((p) => p.page === currentPageRef.current);
-              if (existing) {
-                return prev.map((p) =>
-                  p.page === currentPageRef.current ? { ...p, words: skippedTexts } : p
-                );
-              }
-              return [...prev, { page: currentPageRef.current, words: skippedTexts }];
-            });
-          }
-
-          // STOP: We don't auto-advance in record mode anymore. 
-          // The user must click the next button or stop recording.
-          // This fixes the "jumping to next next page" issue.
-
-          /* 
-          setTimeout(() => {
-            if (modeRef.current === "record") {
-              setCurrentPage(nextPage);
-              setCurrentWordIndex(-1);
-              setHighlightedWords(new Set());
-              setSkippedWords(new Set());
-              matchIndexRef.current = 0;
-            }
-          }, 1000);
-          */
-        } else {
-          // Last page completed in record mode
-          const currentSkippedIndices = Array.from(newSkipped);
-          if (currentSkippedIndices.length > 0) {
-            const pageWords = wordsRef.current;
-            const skippedTexts = currentSkippedIndices
-              .sort((a, b) => a - b)
-              .map((idx) => pageWords[idx]);
-            setAllSkippedWords((prev) => {
-              const existing = prev.find((p) => p.page === currentPageRef.current);
-              if (existing) {
-                return prev.map((p) =>
-                  p.page === currentPageRef.current ? { ...p, words: skippedTexts } : p
-                );
-              }
-              return [...prev, { page: currentPageRef.current, words: skippedTexts }];
-            });
-          }
-          setTimeout(() => {
-            stopRecord();
-            setShowSummary(true);
-          }, 1500);
-        }
+      // Summary only on last page + actually finished
+      if (
+        storyIdx >= storyWordsNorm.length &&
+        storyWordsNorm.length > 0 &&
+        currentPageRef.current === story.pages.length - 1
+      ) {
+        setTimeout(() => {
+          stopRecord();
+          setShowSummary(true);
+        }, 1200);
       }
     };
 
+    // ─── onerror, onend same as before ───
     recognition.onerror = (event: any) => {
       if (event.error === "no-speech" || event.error === "aborted") return;
       console.warn("Speech recognition error:", event.error);
       if (event.error === "not-allowed") {
-        setRecordError("Microphone access was denied. Please allow microphone access and try again.");
+        setRecordError("Microphone access denied. Please allow access.");
         setMode("idle");
         modeRef.current = "idle";
       }
     };
 
     recognition.onend = () => {
-      if (modeRef.current === "record") {
+      if (modeRef.current === "record" && recognitionRef.current === recognition) {
         try {
           recognition.start();
-        } catch (e) { }
+        } catch (e) {
+          console.warn("Recognition restart failed:", e);
+        }
       }
     };
 
     try {
       recognition.start();
     } catch (e) {
-      setRecordError("Could not start speech recognition. Please try again.");
+      setRecordError("Failed to start speech recognition.");
       setMode("idle");
       modeRef.current = "idle";
     }
-  }, [mode, stopRecord]);
+  }, [mode, stopRecord, resetRecordState, currentPage, story.pages.length]);
 
   useEffect(() => {
     return () => {
       Speech.stop();
       if (explainIntervalRef.current) {
         clearInterval(explainIntervalRef.current);
-        explainIntervalRef.current = null;
       }
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
-        } catch (e) { }
+        } catch { }
       }
     };
   }, []);
@@ -559,6 +579,7 @@ export default function StoryScreen() {
               onPress={() => {
                 setShowSummary(false);
                 setAllSkippedWords([]);
+                resetRecordState();
               }}
               style={({ pressed }) => [styles.summaryCloseBtn, { opacity: pressed ? 0.8 : 1 }]}
             >
@@ -597,15 +618,6 @@ export default function StoryScreen() {
                 />
                 <View style={styles.imageCaption}>
                   <Text style={styles.imageCaptionTitle}>{story.title}</Text>
-                  {/* <Text style={styles.imageCaptionAuthor}>by {story.author}</Text>
-                  <View style={styles.imageCaptionMeta}>
-                    <View style={styles.ageTag}>
-                      <Text style={styles.ageTagText}>
-                        Ages {story.ageMin}-{story.ageMax}
-                      </Text>
-                    </View>
-                    <Text style={styles.imageCaptionTime}>{story.readTime} read</Text>
-                  </View> */}
                   <View style={styles.pageIndicator}>
                     <Text style={styles.pageIndicatorText}>
                       Page {currentPage + 1} of {story.pages.length}
@@ -762,6 +774,7 @@ export default function StoryScreen() {
   );
 }
 
+// ─── Styles remain unchanged ───
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -824,34 +837,6 @@ const styles = StyleSheet.create({
     color: "#3B2F1E",
     lineHeight: 24,
   },
-  imageCaptionAuthor: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: "#8B7355",
-    marginTop: 2,
-  },
-  imageCaptionMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 8,
-  },
-  ageTag: {
-    backgroundColor: "#E8DDD0",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  ageTagText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: "#6B5B47",
-  },
-  imageCaptionTime: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: "#A0916E",
-  },
   pageIndicator: {
     marginTop: 8,
     alignItems: "center",
@@ -867,7 +852,6 @@ const styles = StyleSheet.create({
   },
   textSection: {
     minHeight: 100,
-    backgroundColor: "transparent",
   },
   errorBanner: {
     flexDirection: "row",
