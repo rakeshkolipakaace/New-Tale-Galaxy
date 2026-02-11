@@ -16,8 +16,17 @@ import * as Speech from "expo-speech";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
 import { stories } from "@/constants/stories";
+import { quizzes } from "@/constants/quizzes";
 
 type Mode = "idle" | "explain" | "record";
+
+type QuizState = {
+  showQuiz: boolean;
+  currentQuestion: number;
+  selectedAnswers: number[];
+  showResults: boolean;
+  score: number;
+};
 
 function normalizeWord(w: string): string {
   return w.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -96,6 +105,13 @@ export default function StoryScreen() {
   const [recordError, setRecordError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
+  const [quizState, setQuizState] = useState<QuizState>({
+    showQuiz: false,
+    currentQuestion: 0,
+    selectedAnswers: [],
+    showResults: false,
+    score: 0,
+  });
 
   const currentPageRef = useRef(0);
   const modeRef = useRef<Mode>("idle");
@@ -119,6 +135,8 @@ export default function StoryScreen() {
   const currentPageData = story.pages[currentPage];
   const words = currentPageData.text.split(/\s+/);
   wordsRef.current = words;
+
+  const storyQuiz = quizzes.find((q) => q.storyId === id);
 
   const isWide = screenWidth > 600;
   const imageWidth = isWide ? screenWidth * 0.38 : screenWidth * 0.35;
@@ -474,7 +492,18 @@ export default function StoryScreen() {
       ) {
         setTimeout(() => {
           stopRecord();
-          setShowSummary(true);
+          // Show quiz instead of summary if quiz is available
+          if (storyQuiz && storyQuiz.questions.length > 0) {
+            setQuizState({
+              showQuiz: true,
+              currentQuestion: 0,
+              selectedAnswers: [],
+              showResults: false,
+              score: 0,
+            });
+          } else {
+            setShowSummary(true);
+          }
         }, 1200);
       }
     };
@@ -508,6 +537,44 @@ export default function StoryScreen() {
       modeRef.current = "idle";
     }
   }, [mode, stopRecord, resetRecordState, currentPage, story.pages.length]);
+
+  // ─── Quiz Handler Functions ───
+  const handleQuizAnswer = useCallback((answerIndex: number) => {
+    setQuizState((prev) => {
+      const newSelectedAnswers = [...prev.selectedAnswers, answerIndex];
+      const isCorrect = storyQuiz?.questions[prev.currentQuestion]?.correctAnswer === answerIndex;
+      const newScore = isCorrect ? prev.score + 1 : prev.score;
+
+      if (prev.currentQuestion < (storyQuiz?.questions.length || 0) - 1) {
+        // Move to next question
+        return {
+          ...prev,
+          selectedAnswers: newSelectedAnswers,
+          score: newScore,
+          currentQuestion: prev.currentQuestion + 1,
+        };
+      } else {
+        // Show results
+        return {
+          ...prev,
+          selectedAnswers: newSelectedAnswers,
+          score: newScore,
+          showResults: true,
+        };
+      }
+    });
+  }, [storyQuiz]);
+
+  const handleQuizComplete = useCallback(() => {
+    setQuizState({
+      showQuiz: false,
+      currentQuestion: 0,
+      selectedAnswers: [],
+      showResults: false,
+      score: 0,
+    });
+    setShowSummary(true);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -550,6 +617,23 @@ export default function StoryScreen() {
         <View style={[StyleSheet.absoluteFill, styles.summaryOverlay, { zIndex: 2000 }]}>
           <View style={styles.summaryCard}>
             <Text style={styles.summaryTitle}>Reading Summary</Text>
+
+            {/* Quiz Results Section */}
+            {storyQuiz && quizState.score > 0 && (
+              <View style={styles.quizResultsSection}>
+                <Text style={styles.quizResultsTitle}>Quiz Results</Text>
+                <View style={styles.quizScoreRow}>
+                  <Ionicons name="trophy" size={24} color="#D4A574" />
+                  <Text style={styles.quizScoreText}>
+                    {quizState.score} / {storyQuiz.questions.length} correct
+                  </Text>
+                </View>
+                <Text style={styles.quizPercentageText}>
+                  {Math.round((quizState.score / storyQuiz.questions.length) * 100)}% Score
+                </Text>
+              </View>
+            )}
+
             <ScrollView style={styles.summaryScroll}>
               {allSkippedWords.length > 0 ? (
                 <>
@@ -585,6 +669,116 @@ export default function StoryScreen() {
             >
               <Text style={styles.summaryCloseText}>Back to Story</Text>
             </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* Quiz Overlay */}
+      {quizState.showQuiz && storyQuiz && (
+        <View style={[StyleSheet.absoluteFill, styles.summaryOverlay, { zIndex: 2000 }]}>
+          <View style={styles.quizCard}>
+            {!quizState.showResults ? (
+              // Quiz Question
+              <>
+                <View style={styles.quizHeader}>
+                  <Text style={styles.quizTitle}>Story Quiz</Text>
+                  <Text style={styles.quizProgress}>
+                    Question {quizState.currentQuestion + 1} of {storyQuiz.questions.length}
+                  </Text>
+                </View>
+
+                <View style={styles.progressBar}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        width: `${((quizState.currentQuestion + 1) / storyQuiz.questions.length) * 100}%`,
+                      },
+                    ]}
+                  />
+                </View>
+
+                <View style={styles.questionContainer}>
+                  <Text style={styles.questionText}>
+                    {storyQuiz.questions[quizState.currentQuestion].question}
+                  </Text>
+
+                  <View style={styles.optionsContainer}>
+                    {storyQuiz.questions[quizState.currentQuestion].options.map((option, index) => (
+                      <Pressable
+                        key={index}
+                        onPress={() => handleQuizAnswer(index)}
+                        style={({ pressed }) => [
+                          styles.optionButton,
+                          { opacity: pressed ? 0.8 : 1 },
+                        ]}
+                      >
+                        <Text style={styles.optionText}>{option}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              </>
+            ) : (
+              // Quiz Results
+              <>
+                <View style={styles.quizHeader}>
+                  <Text style={styles.quizTitle}>Quiz Complete!</Text>
+                </View>
+
+                <View style={styles.quizResultsContainer}>
+                  <View style={styles.quizScoreBig}>
+                    <Ionicons name="trophy" size={48} color="#D4A574" />
+                    <Text style={styles.quizScoreBigText}>
+                      {quizState.score} / {storyQuiz.questions.length}
+                    </Text>
+                    <Text style={styles.quizScorePercentage}>
+                      {Math.round((quizState.score / storyQuiz.questions.length) * 100)}%
+                    </Text>
+                  </View>
+
+                  <ScrollView style={styles.quizAnswersScroll}>
+                    {storyQuiz.questions.map((question, index) => {
+                      const userAnswer = quizState.selectedAnswers[index];
+                      const isCorrect = question.correctAnswer === userAnswer;
+
+                      return (
+                        <View key={question.id} style={styles.answerReviewItem}>
+                          <View style={styles.answerReviewHeader}>
+                            <Text style={styles.answerReviewQuestion}>Q{index + 1}: {question.question}</Text>
+                            <Ionicons
+                              name={isCorrect ? "checkmark-circle" : "close-circle"}
+                              size={20}
+                              color={isCorrect ? "#27AE60" : "#E74C3C"}
+                            />
+                          </View>
+                          <Text style={styles.answerReviewUser}>
+                            Your answer: {question.options[userAnswer]}
+                          </Text>
+                          {!isCorrect && (
+                            <Text style={styles.answerReviewCorrect}>
+                              Correct: {question.options[question.correctAnswer]}
+                            </Text>
+                          )}
+                          {question.explanation && (
+                            <Text style={styles.answerReviewExplanation}>
+                              {question.explanation}
+                            </Text>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+
+                <Pressable
+                  onPress={handleQuizComplete}
+                  style={({ pressed }) => [styles.quizCompleteBtn, { opacity: pressed ? 0.8 : 1 }]}
+                >
+                  <Text style={styles.quizCompleteBtnText}>See Reading Results</Text>
+                </Pressable>
+              </>
+            )}
           </View>
         </View>
       )}
@@ -1112,5 +1306,176 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: "#8B7355",
     marginTop: 4,
+  },
+  // Quiz Styles
+  quizCard: {
+    backgroundColor: "#FDF8F0",
+    borderRadius: 20,
+    width: "100%",
+    maxHeight: "85%",
+    padding: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  quizHeader: {
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  quizTitle: {
+    fontSize: 24,
+    fontFamily: "PlayfairDisplay_700Bold",
+    color: "#3B2F1E",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  quizProgress: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#8B7355",
+  },
+  questionContainer: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  questionText: {
+    fontSize: 18,
+    fontFamily: "Inter_600SemiBold",
+    color: "#3B2F1E",
+    textAlign: "center",
+    marginBottom: 32,
+    lineHeight: 26,
+  },
+  optionsContainer: {
+    gap: 12,
+  },
+  optionButton: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 2,
+    borderColor: "#E5DDD0",
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    alignItems: "center",
+  },
+  optionText: {
+    fontSize: 16,
+    fontFamily: "Inter_500Medium",
+    color: "#3B2F1E",
+    textAlign: "center",
+  },
+  quizResultsContainer: {
+    flex: 1,
+  },
+  quizScoreBig: {
+    alignItems: "center",
+    paddingVertical: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E8DDD0",
+    marginBottom: 20,
+  },
+  quizScoreBigText: {
+    fontSize: 32,
+    fontFamily: "PlayfairDisplay_700Bold",
+    color: "#3B2F1E",
+    marginTop: 12,
+  },
+  quizScorePercentage: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: "#D4A574",
+    marginTop: 4,
+  },
+  quizAnswersScroll: {
+    flex: 1,
+    marginBottom: 20,
+  },
+  answerReviewItem: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E5DDD0",
+  },
+  answerReviewHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  answerReviewQuestion: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#3B2F1E",
+    flex: 1,
+    marginRight: 12,
+    lineHeight: 20,
+  },
+  answerReviewUser: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#8B7355",
+    marginBottom: 4,
+  },
+  answerReviewCorrect: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#27AE60",
+    marginBottom: 4,
+  },
+  answerReviewExplanation: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#A0916E",
+    fontStyle: "italic",
+    marginTop: 8,
+    lineHeight: 18,
+  },
+  quizCompleteBtn: {
+    backgroundColor: "#3B2F1E",
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  quizCompleteBtnText: {
+    color: "#FDF8F0",
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+  },
+  quizResultsSection: {
+    backgroundColor: "rgba(212, 165, 116, 0.1)",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "rgba(212, 165, 116, 0.2)",
+  },
+  quizResultsTitle: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: "#8B7355",
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  quizScoreRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  quizScoreText: {
+    fontSize: 18,
+    fontFamily: "PlayfairDisplay_700Bold",
+    color: "#3B2F1E",
+  },
+  quizPercentageText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#8B7355",
+    textAlign: "center",
   },
 });
