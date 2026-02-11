@@ -112,7 +112,7 @@ export default function HomeScreen() {
             <View style={styles.headerRow}>
               <View>
                 <Text style={styles.headerGreeting}>Welcome to</Text>
-                <Text style={styles.headerTitle}>StoryVoice</Text>
+                <Text style={styles.headerTitle}>Tale-Galaxy</Text>
               </View>
               <View style={styles.headerIcon}>
                 <Ionicons name="book" size={28} color={Colors.primary} />
